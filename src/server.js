@@ -39,29 +39,83 @@ function generateId() {
 // Load music metadata
 function loadMusicCatalog() {
   const catalogPath = path.join(MUSIC_DIR, 'catalog.json');
+  
+  // catalog.json を読み込み
   if (!fs.existsSync(catalogPath)) {
-    // Create sample catalog
-    const sample = {
-      songs: [
-        {
-          id: "demo1",
-          title: "サンプル曲1",
-          artist: "アーティスト1",
-          category: "J-POP",
-          file: "demo1.mp3",
-          startTime: 0,
-          sabiBeat: 30,
-          sabiDuration: 15
-        }
-      ]
-    };
-    fs.writeFileSync(catalogPath, JSON.stringify(sample, null, 2));
-    return sample;
+    // catalog.json がない場合は空のカタログを作成
+    const emptyCatalog = { songs: [] };
+    fs.writeFileSync(catalogPath, JSON.stringify(emptyCatalog, null, 2));
+    return emptyCatalog;
   }
+  
   return JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 }
 
+// GitHub の music フォルダから MP3 ファイルを自動スキャンして catalog.json に追加
+function scanMusicFolder() {
+  try {
+    if (!fs.existsSync(MUSIC_DIR)) {
+      console.log('📁 music フォルダが見つかりません。作成します...');
+      fs.mkdirSync(MUSIC_DIR, { recursive: true });
+      return;
+    }
+
+    const files = fs.readdirSync(MUSIC_DIR);
+    const audioFiles = files.filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f));
+    
+    if (audioFiles.length === 0) {
+      console.log('🎵 music フォルダに音声ファイルがありません');
+      return;
+    }
+
+    console.log(`\n📂 music フォルダをスキャン: ${audioFiles.length} 個のファイルを検出`);
+    
+    // 現在の catalog を読み込み
+    let catalog = loadMusicCatalog();
+    const existingFiles = new Set(catalog.songs.map(s => s.file));
+    
+    // 新しいファイルを追加
+    let addedCount = 0;
+    audioFiles.forEach((file, index) => {
+      if (existingFiles.has(file)) {
+        console.log(`  ✓ ${file} （既存）`);
+        return;
+      }
+
+      // デフォルト曲情報を生成
+      const title = path.parse(file).name; // ファイル名を曲名として使用
+      const newSong = {
+        id: `song_${Date.now()}_${index}`,
+        title: title,
+        artist: "アーティスト不明",
+        category: "その他",
+        file: file,
+        startTime: 0,
+        sabiBeat: 60,
+        sabiDuration: 15
+      };
+      
+      catalog.songs.push(newSong);
+      console.log(`  ✨ ${file} （新規追加）`);
+      addedCount++;
+    });
+
+    // 更新があった場合は保存
+    if (addedCount > 0) {
+      fs.writeFileSync(
+        path.join(MUSIC_DIR, 'catalog.json'),
+        JSON.stringify(catalog, null, 2)
+      );
+      console.log(`\n✅ ${addedCount} 個の曲を catalog.json に追加しました\n`);
+    }
+
+  } catch (err) {
+    console.error('❌ music フォルダのスキャンエラー:', err.message);
+  }
+}
+
 let musicCatalog = loadMusicCatalog();
+scanMusicFolder(); // 起動時に自動スキャン
 
 // Game logic
 function createRoom(hostId, settings) {
