@@ -6,7 +6,9 @@ const { WebSocketServer } = require('./ws-server.js');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '../public');
-const MUSIC_DIR = path.join(__dirname, '../music');
+const MUSIC_DIR = isProduction 
+  ? '/data/music'
+  : path.join(__dirname, '../music');
 
 // In-memory state
 const rooms = new Map();
