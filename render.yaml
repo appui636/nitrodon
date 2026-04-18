@@ -9,5 +9,5 @@ services:
         value: 10000
     disk:
       name: music
-      mountPath: /music
+      mountPath: /opt/render/project/src/music
       sizeGB: 1
