@@ -1,7 +1,7 @@
 {
   "songs": [
     {
-      "id": "song_1776334561045_3n93l",
+      "id": "song1",
       "title": "keep it smooth",
       "artist": "JoMeY Project",
       "category": "J-POP",
@@ -9,6 +9,16 @@
       "startTime": 0,
       "sabiBeat": 65,
       "sabiDuration": 17
-    }
+    },
+    {
+      "id": "song2",
+      "title": "That is President.",
+      "artist": "JoMeY Project",
+      "category": "J-POP",
+      "file": "That is President..mp3",
+      "startTime": 0,
+      "sabiBeat": 56,
+      "sabiDuration": 20
+    },
   ]
 }
