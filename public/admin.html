@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理画面 | IntroDone!</title>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Dots&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #06040f; --surface: #0d0a1e; --surface2: #141030; --border: #2a1f5a;
+      --neon-pink: #ff2d78; --neon-cyan: #00e5ff; --neon-yellow: #ffe600;
+      --neon-green: #00ff88; --neon-purple: #bf00ff;
+      --text: #f0e8ff; --text-dim: #8878aa; --danger: #ff4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Noto Sans JP', sans-serif; padding: 20px; }
+    h1 { font-family: 'Zen Dots', sans-serif; color: var(--neon-cyan); margin-bottom: 6px; }
+    .sub { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .card-title { font-size: 0.9rem; color: var(--neon-cyan); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 16px; font-weight: 700; }
+    input, select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: 'Noto Sans JP', sans-serif; font-size: 0.9rem; padding: 10px 12px; outline: none; margin-bottom: 10px; }
+    input:focus, select:focus { border-color: var(--neon-cyan); }
+    label { display: block; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 20px; border: none; border-radius: 8px; font-family: 'Noto Sans JP', sans-serif; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+    .btn-primary { background: linear-gradient(135deg, var(--neon-pink), var(--neon-purple)); color: white; width: 100%; }
+    .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+    .btn-sm { padding: 6px 12px; font-size: 0.8rem; width: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { text-align: left; padding: 8px 10px; color: var(--text-dim); font-size: 0.75rem; letter-spacing: 1px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px; border-bottom: 1px solid rgba(42,31,90,0.5); vertical-align: middle; }
+    tr:hover td { background: var(--surface2); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; background: rgba(0,229,255,0.1); color: var(--neon-cyan); border: 1px solid rgba(0,229,255,0.3); }
+    .toast { position: fixed; top: 20px; right: 20px; background: var(--surface); border: 1px solid var(--neon-green); color: var(--neon-green); border-radius: 8px; padding: 10px 16px; font-size: 0.85rem; z-index: 999; display: none; }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+    audio-test { display: block; margin-top: 4px; }
+    .play-btn { background: rgba(0,229,255,0.1); border: 1px solid var(--neon-cyan); color: var(--neon-cyan); border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; }
+    .play-btn:hover { background: rgba(0,229,255,0.2); }
+    .stat-row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .stat { background: var(--surface2); border-radius: 8px; padding: 12px 18px; border: 1px solid var(--border); }
+    .stat-num { font-family: 'Zen Dots', sans-serif; font-size: 1.8rem; color: var(--neon-yellow); }
+    .stat-label { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <h1>🎛️ ADMIN</h1>
+  <p class="sub">IntroDone! 管理画面 — 曲の追加・編集・削除</p>
+  <div class="toast" id="toast"></div>
+
+  <!-- Stats -->
+  <div class="card">
+    <div class="card-title">📊 統計</div>
+    <div class="stat-row">
+      <div class="stat"><div class="stat-num" id="statTotal">0</div><div class="stat-label">曲数合計</div></div>
+      <div class="stat"><div class="stat-num" id="statCategories">0</div><div class="stat-label">カテゴリ数</div></div>
+    </div>
+  </div>
+
+  <!-- Add song form -->
+  <div class="card">
+    <div class="card-title">➕ 曲を追加</div>
+    <div class="grid-2">
+      <div>
+        <label>曲タイトル（正解文字列）*</label>
+        <input type="text" id="fTitle" placeholder="例: ドライフラワー" />
+      </div>
+      <div>
+        <label>アーティスト名*</label>
+        <input type="text" id="fArtist" placeholder="例: 優里" />
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <label>カテゴリ*</label>
+        <input type="text" id="fCategory" placeholder="例: J-POP, アニメ, 洋楽" />
+      </div>
+      <div>
+        <label>ファイル名（music/フォルダ内）*</label>
+        <input type="text" id="fFile" placeholder="例: song01.mp3" />
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <label>イントロ再生開始時間（秒）</label>
+        <input type="number" id="fStartTime" value="0" min="0" step="0.1" />
+      </div>
+      <div>
+        <label>サビ開始時間（秒）</label>
+        <input type="number" id="fSabiBeat" value="60" min="0" step="0.1" />
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <label>サビ再生時間（秒）</label>
+        <input type="number" id="fSabiDuration" value="15" min="5" max="60" />
+      </div>
+      <div style="display:flex; align-items:flex-end; padding-bottom:10px;">
+        <button class="play-btn" onclick="testAudio()">▶ 試聴</button>
+        <audio id="previewAudio" style="display:none;"></audio>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="addSong()">追加する</button>
+  </div>
+
+  <!-- Song list -->
+  <div class="card">
+    <div class="card-title">🎵 曲一覧</div>
+    <div style="overflow-x:auto;">
+      <table id="songTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>タイトル</th>
+            <th>アーティスト</th>
+            <th>カテゴリ</th>
+            <th>ファイル</th>
+            <th>開始</th>
+            <th>サビ</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="songTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let catalog = { songs: [] };
+
+    async function loadCatalog() {
+      try {
+        const res = await fetch('/music/catalog.json?_=' + Date.now());
+        catalog = await res.json();
+        renderTable();
+        updateStats();
+      } catch (e) {
+        showToast('カタログの読み込みに失敗しました: ' + e.message, true);
+      }
+    }
+
+    async function saveCatalog() {
+      try {
+        const res = await fetch('/admin/catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(catalog)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('保存しました ✅');
+        updateStats();
+      } catch (e) {
+        showToast('保存エラー: ' + e.message, true);
+      }
+    }
+
+    function generateId() {
+      return 'song_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    }
+
+    function addSong() {
+      const title = document.getElementById('fTitle').value.trim();
+      const artist = document.getElementById('fArtist').value.trim();
+      const category = document.getElementById('fCategory').value.trim();
+      const file = document.getElementById('fFile').value.trim();
+      const startTime = parseFloat(document.getElementById('fStartTime').value) || 0;
+      const sabiBeat = parseFloat(document.getElementById('fSabiBeat').value) || 0;
+      const sabiDuration = parseInt(document.getElementById('fSabiDuration').value) || 15;
+
+      if (!title || !artist || !category || !file) {
+        showToast('必須項目を入力してください', true); return;
+      }
+
+      const song = { id: generateId(), title, artist, category, file, startTime, sabiBeat, sabiDuration };
+      catalog.songs.push(song);
+      saveCatalog();
+      renderTable();
+
+      // Clear form
+      ['fTitle','fArtist','fCategory','fFile'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('fStartTime').value = '0';
+      document.getElementById('fSabiBeat').value = '60';
+      document.getElementById('fSabiDuration').value = '15';
+    }
+
+    function deleteSong(id) {
+      if (!confirm('この曲を削除しますか？')) return;
+      catalog.songs = catalog.songs.filter(s => s.id !== id);
+      saveCatalog();
+      renderTable();
+    }
+
+    function testAudio() {
+      const file = document.getElementById('fFile').value.trim();
+      const startTime = parseFloat(document.getElementById('fStartTime').value) || 0;
+      if (!file) { showToast('ファイル名を入力してください', true); return; }
+      const audio = document.getElementById('previewAudio');
+      audio.src = `/music/${file}`;
+      audio.currentTime = startTime;
+      audio.play().catch(e => showToast('再生エラー: ' + e.message, true));
+    }
+
+    function testSong(file, startTime) {
+      const audio = document.getElementById('previewAudio');
+      if (!audio.paused && audio.src.endsWith(file)) {
+        audio.pause(); return;
+      }
+      audio.src = `/music/${file}`;
+      audio.currentTime = startTime || 0;
+      audio.play().catch(e => showToast('再生エラー: ' + e.message, true));
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('songTableBody');
+      if (catalog.songs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-dim); padding:20px;">曲がありません。上のフォームから追加してください。</td></tr>';
+        return;
+      }
+      tbody.innerHTML = catalog.songs.map((s, i) => `
+        <tr>
+          <td style="color:var(--text-dim);">${i + 1}</td>
+          <td style="font-weight:700;">${esc(s.title)}</td>
+          <td style="color:var(--text-dim);">${esc(s.artist)}</td>
+          <td><span class="badge">${esc(s.category)}</span></td>
+          <td style="font-size:0.8rem; color:var(--text-dim);">
+            ${esc(s.file)}
+            <br><button class="play-btn" onclick="testSong('${esc(s.file)}', ${s.startTime || 0})">▶ イントロ</button>
+          </td>
+          <td style="color:var(--text-dim);">${s.startTime || 0}s</td>
+          <td style="color:var(--text-dim);">${s.sabiBeat || 0}s / ${s.sabiDuration || 15}s</td>
+          <td><button class="btn btn-danger btn-sm" onclick="deleteSong('${s.id}')">削除</button></td>
+        </tr>
+      `).join('');
+    }
+
+    function updateStats() {
+      document.getElementById('statTotal').textContent = catalog.songs.length;
+      const cats = new Set(catalog.songs.map(s => s.category));
+      document.getElementById('statCategories').textContent = cats.size;
+    }
+
+    function showToast(msg, isError = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast' + (isError ? ' error' : '');
+      el.style.display = 'block';
+      setTimeout(() => el.style.display = 'none', 3000);
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    loadCatalog();
+  </script>
+</body>
+</html>

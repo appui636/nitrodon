@@ -1,0 +1,12 @@
+{
+  "name": "introdone-game",
+  "version": "1.0.0",
+  "description": "Web-based intro quiz game",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
