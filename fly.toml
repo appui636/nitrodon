@@ -1,8 +1,3 @@
-# fly.toml app configuration file generated for nitrodon on 2026-04-18T10:00:46Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'nitrodon'
 primary_region = 'iad'
 
@@ -21,3 +16,7 @@ primary_region = 'iad'
   cpu_kind = 'shared'
   cpus = 1
   memory_mb = 1024
+
+[mounts]
+  source = "data"
+  destination = "/data"
