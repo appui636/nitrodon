@@ -6,9 +6,12 @@ const { WebSocketServer } = require('./ws-server.js');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '../public');
+// この行を最初に追加！
+const isProduction = process.env.FLY_APP_NAME;
+
 const MUSIC_DIR = isProduction
-  ? '/data/music'                      // fly.io 本番
-  : path.join(__dirname, '../music');  // ロー
+  ? '/data/music'
+  : path.join(__dirname, '../music');
 // In-memory state
 const rooms = new Map();
 const clients = new Map(); // ws -> { nickname, roomId, id }
