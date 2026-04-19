@@ -6,12 +6,27 @@ const { WebSocketServer } = require('./ws-server.js');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '../public');
-// この行を最初に追加！
-const isProduction = process.env.FLY_APP_NAME;
 
+// ====== fly.io 対応: MUSIC_DIR を環境に応じて設定 ======
+const isProduction = process.env.FLY_APP_NAME;
 const MUSIC_DIR = isProduction
-  ? '/data/music'
-  : path.join(__dirname, '../music');
+  ? '/data/music'                      // fly.io: Persistent Volume
+  : path.join(__dirname, '../music');  // ローカル開発
+
+// ====== 起動時に music フォルダを確認・作成 ======
+function ensureMusicDirExists() {
+  if (!fs.existsSync(MUSIC_DIR)) {
+    console.log(`📁 ${MUSIC_DIR} フォルダを作成しています...`);
+    fs.mkdirSync(MUSIC_DIR, { recursive: true });
+    console.log(`✅ ${MUSIC_DIR} フォルダを作成しました`);
+  }
+}
+
+ensureMusicDirExists();
+
+console.log(`📂 MUSIC_DIR: ${MUSIC_DIR}`);
+console.log(`🌍 Environment: ${isProduction ? 'fly.io Production' : 'Local Development'}`);
+
 // In-memory state
 const rooms = new Map();
 const clients = new Map(); // ws -> { nickname, roomId, id }
@@ -40,27 +55,37 @@ function generateId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-// Load music metadata
+// ====== catalog.json を安全に読み込み・作成 ======
 function loadMusicCatalog() {
   const catalogPath = path.join(MUSIC_DIR, 'catalog.json');
   
-  // catalog.json を読み込み
-  if (!fs.existsSync(catalogPath)) {
-    // catalog.json がない場合は空のカタログを作成
-    const emptyCatalog = { songs: [] };
-    fs.writeFileSync(catalogPath, JSON.stringify(emptyCatalog, null, 2));
-    return emptyCatalog;
+  try {
+    if (!fs.existsSync(catalogPath)) {
+      console.log(`📖 catalog.json が見つかりません。作成しています...`);
+      const emptyCatalog = { songs: [] };
+      fs.writeFileSync(catalogPath, JSON.stringify(emptyCatalog, null, 2));
+      console.log(`✅ 空の catalog.json を作成しました: ${catalogPath}`);
+      return emptyCatalog;
+    }
+    
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    console.log(`✅ catalog.json を読み込みました（${catalog.songs.length} 曲）`);
+    return catalog;
+  } catch (err) {
+    console.error(`❌ catalog.json の読み込みエラー: ${err.message}`);
+    console.error(`⚠️ 空のカタログで続行します`);
+    return { songs: [] };
   }
-  
-  return JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 }
 
-// GitHub の music フォルダから MP3 ファイルを自動スキャンして catalog.json に追加
+// ====== music フォルダから MP3 ファイルを自動スキャン ======
 function scanMusicFolder() {
   try {
+    // フォルダが存在することを確認
     if (!fs.existsSync(MUSIC_DIR)) {
-      console.log('📁 music フォルダが見つかりません。作成します...');
+      console.log(`📁 ${MUSIC_DIR} が見つかりません。作成しています...`);
       fs.mkdirSync(MUSIC_DIR, { recursive: true });
+      console.log(`✅ ${MUSIC_DIR} を作成しました`);
       return;
     }
 
@@ -106,11 +131,15 @@ function scanMusicFolder() {
 
     // 更新があった場合は保存
     if (addedCount > 0) {
-      fs.writeFileSync(
-        path.join(MUSIC_DIR, 'catalog.json'),
-        JSON.stringify(catalog, null, 2)
-      );
-      console.log(`\n✅ ${addedCount} 個の曲を catalog.json に追加しました\n`);
+      try {
+        fs.writeFileSync(
+          path.join(MUSIC_DIR, 'catalog.json'),
+          JSON.stringify(catalog, null, 2)
+        );
+        console.log(`\n✅ ${addedCount} 個の曲を catalog.json に追加しました\n`);
+      } catch (err) {
+        console.error(`❌ catalog.json の保存エラー: ${err.message}`);
+      }
     }
 
   } catch (err) {
@@ -278,58 +307,64 @@ function handleBuzzer(ws, room, clientInfo) {
   }, 10000);
 }
 
+function normalizeAnswer(str) {
+  return str
+    .toLowerCase()
+    .replace(/\s/g, '')
+    .replace(/[・ー]/g, '')
+    .replace(/[。、！？]/g, '');
+}
+
 function handleAnswer(ws, room, clientInfo, answer) {
   if (room.state !== 'playing') return;
   if (room.buzzerPressedBy !== clientInfo.id) return;
 
-  clearTimeout(room.answerTimer);
-
   const player = room.players.get(clientInfo.id);
-  const song = room.currentQuestion;
-  const correct = isCorrectAnswer(answer, song.title);
+  if (!player) return;
 
+  clearTimeout(room.answerTimer);
+  room.buzzerPressedBy = null;
+  room.answeredPlayers.add(clientInfo.id);
+
+  const correct = normalizeAnswer(answer) === normalizeAnswer(room.currentQuestion.title);
   if (correct) {
-    player.score++;
-    player.answers.push({ songId: song.id, title: song.title, artist: song.artist, correct: true, answer });
-    
+    player.score += 1;
     broadcast(room, {
       type: 'answer_result',
       playerId: clientInfo.id,
       nickname: player.nickname,
       correct: true,
-      answer,
-      songTitle: song.title,
-      artist: song.artist,
-      songFile: song.file,
-      sabiTime: song.sabiBeat || 0,
-      sabiDuration: (song.sabiDuration || 15),
+      answer: room.currentQuestion.title,
       players: getRoomPlayerList(room),
     });
-
-    // Next question after sabi plays
-    const sabiPlayTime = ((song.sabiDuration || 15) + 2) * 1000;
-    setTimeout(() => startNextQuestion(room), sabiPlayTime);
+    setTimeout(() => startNextQuestion(room), 4000);
   } else {
     player.isMiss = true;
-    player.answers.push({ songId: song.id, title: song.title, artist: song.artist, correct: false, answer });
-    room.buzzerPressedBy = null;
-
+    player.answers = player.answers || [];
+    player.answers.push({ question: room.currentQuestion.title, answer });
     broadcast(room, {
       type: 'answer_result',
       playerId: clientInfo.id,
       nickname: player.nickname,
       correct: false,
-      answer,
+      answer: room.currentQuestion.title,
       players: getRoomPlayerList(room),
     });
-
-    // Resume question or timeout if all missed
-    const activePlayers = Array.from(room.players.values()).filter(p => !p.isMiss);
-    if (activePlayers.length === 0) {
-      // everyone missed
-      setTimeout(() => timeoutQuestion(room), 1500);
+    
+    // Check if all players have missed
+    let allMissed = true;
+    for (const p of room.players.values()) {
+      if (!p.isMiss) {
+        allMissed = false;
+        break;
+      }
+    }
+    
+    if (allMissed) {
+      setTimeout(() => startNextQuestion(room), 3000);
     } else {
-      // Resume buzzer period
+      // Continue question with remaining players
+      const song = room.currentQuestion;
       const extraSeconds = room.settings.extraSeconds || 0;
       const remaining = (song.sabiDuration || 15) + extraSeconds;
       room.questionTimer = setTimeout(() => timeoutQuestion(room), remaining * 1000);
@@ -337,74 +372,65 @@ function handleAnswer(ws, room, clientInfo, answer) {
   }
 }
 
-function isCorrectAnswer(answer, title) {
-  if (!answer || !answer.trim()) return false;
-  const normalize = s => s.toLowerCase().replace(/[　\s・ー]/g, '').replace(/[！？。、]/g, '');
-  return normalize(answer) === normalize(title);
-}
-
-// WebSocket message handler
 function handleMessage(ws, data) {
-  let msg;
-  try { msg = JSON.parse(data); } catch { return; }
+  try {
+    const msg = JSON.parse(data);
+    const clientInfo = clients.get(ws);
+    if (!clientInfo) return;
 
-  const clientInfo = clients.get(ws);
-  if (!clientInfo) return;
-
-  switch (msg.type) {
-    case 'set_nickname': {
-      clientInfo.nickname = msg.nickname;
-      ws.send(JSON.stringify({ type: 'nickname_set', nickname: msg.nickname }));
+    switch (msg.type) {
+    case 'get_rooms': {
+      const roomList = Array.from(rooms.values())
+        .filter(r => r.state === 'waiting')
+        .map(r => ({
+          key: r.key,
+          playerCount: r.players.size,
+          maxPlayers: 10,
+        }));
+      ws.send(JSON.stringify({ type: 'rooms', rooms: roomList }));
       break;
     }
 
     case 'create_room': {
       const room = createRoom(clientInfo.id, msg.settings || {});
+      clientInfo.roomId = room.key;
       room.players.set(clientInfo.id, {
-        nickname: clientInfo.nickname,
+        nickname: msg.nickname,
         score: 0,
         missCount: 0,
         answers: [],
         isMiss: false,
       });
-      clientInfo.roomId = room.key;
-      ws.send(JSON.stringify({
-        type: 'room_created',
-        roomKey: room.key,
-        players: getRoomPlayerList(room),
-        settings: room.settings,
-        categories: [...new Set(musicCatalog.songs.map(s => s.category))],
-      }));
+      ws.send(JSON.stringify({ type: 'room_created', roomKey: room.key, players: getRoomPlayerList(room) }));
       break;
     }
 
     case 'join_room': {
       const room = rooms.get(msg.roomKey);
-      if (!room) { ws.send(JSON.stringify({ type: 'error', message: '部屋が見つかりません' })); return; }
-      if (room.state !== 'waiting') { ws.send(JSON.stringify({ type: 'error', message: 'ゲームが既に始まっています' })); return; }
-      if (room.players.size >= 10) { ws.send(JSON.stringify({ type: 'error', message: '部屋が満員です' })); return; }
-
+      if (!room) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+        return;
+      }
+      if (room.state !== 'waiting') {
+        ws.send(JSON.stringify({ type: 'error', message: 'Room is not waiting' }));
+        return;
+      }
+      if (room.players.size >= 10) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Room is full' }));
+        return;
+      }
+      
+      clientInfo.roomId = room.key;
       room.players.set(clientInfo.id, {
-        nickname: clientInfo.nickname,
+        nickname: msg.nickname,
         score: 0,
         missCount: 0,
         answers: [],
         isMiss: false,
       });
-      clientInfo.roomId = room.key;
-
-      ws.send(JSON.stringify({
-        type: 'room_joined',
-        roomKey: room.key,
-        players: getRoomPlayerList(room),
-        settings: room.settings,
-        isHost: false,
-      }));
-
       broadcast(room, {
         type: 'player_joined',
         players: getRoomPlayerList(room),
-        nickname: clientInfo.nickname,
       });
       break;
     }
@@ -514,6 +540,9 @@ function handleMessage(ws, data) {
       break;
     }
   }
+  } catch (err) {
+    console.error('Message handling error:', err);
+  }
 }
 
 // HTTP Server
@@ -528,6 +557,10 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         if (!data.songs || !Array.isArray(data.songs)) throw new Error('Invalid format');
+        
+        // ディレクトリが存在することを確認
+        ensureMusicDirExists();
+        
         fs.writeFileSync(path.join(MUSIC_DIR, 'catalog.json'), JSON.stringify(data, null, 2));
         musicCatalog = data; // reload in memory
         res.writeHead(200, { 'Content-Type': 'application/json' });
