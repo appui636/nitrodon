@@ -132,15 +132,15 @@ function handleServerMessage(msg) {
     case 'room_created':
       myRoomKey = msg.roomKey;
       isHost = true;
-      setupRoomScreen(msg.players, msg.settings, msg.roomKey, true);
-      loadCategories(msg.categories);
+      setupRoomScreen(msg.players, msg.settings || {}, msg.roomKey, true);
+      if (msg.categories) loadCategories(msg.categories);
       showScreen('screenRoom');
       break;
 
     case 'room_joined':
       myRoomKey = msg.roomKey;
       isHost = false;
-      setupRoomScreen(msg.players, msg.settings, msg.roomKey, false);
+      setupRoomScreen(msg.players, msg.settings || {}, msg.roomKey, false);
       showScreen('screenRoom');
       break;
 
@@ -157,7 +157,7 @@ function handleServerMessage(msg) {
       break;
 
     case 'settings_updated':
-      updateSettingsSummary(msg.settings);
+      updateSettingsSummary(msg.settings || {});
       updatePlayerList('waitingPlayerList', msg.players);
       break;
 
@@ -191,7 +191,7 @@ function handleServerMessage(msg) {
 
     case 'room_reset':
       myLastAnswers = [];
-      setupRoomScreen(msg.players, msg.settings, myRoomKey, isHost);
+      setupRoomScreen(msg.players, msg.settings || {}, myRoomKey, isHost);
       showScreen('screenRoom');
       break;
 
@@ -368,10 +368,17 @@ function updateStartButton(players) {
 function updateSettingsSummary(settings) {
   const el = document.getElementById('settingsSummary');
   if (!el) return;
+  // settingsがundefined/nullの場合はデフォルト値を使う
+  const s = settings || {};
+  const questionCount = s.questionCount ?? '?';
+  const extraSeconds = s.extraSeconds ?? 0;
+  const categories = Array.isArray(s.categories) && s.categories.length > 0
+    ? s.categories.join('、')
+    : 'ランダム（全て）';
   el.innerHTML = `
-    📋 問題数: <strong style="color:var(--neon-cyan)">${settings.questionCount}問</strong><br>
-    ⏱ 追加秒数: <strong style="color:var(--neon-cyan)">+${settings.extraSeconds}秒</strong><br>
-    🎵 カテゴリ: <strong style="color:var(--neon-cyan)">${settings.categories.join('、')}</strong>
+    📋 問題数: <strong style="color:var(--neon-cyan)">${questionCount}問</strong><br>
+    ⏱ 追加秒数: <strong style="color:var(--neon-cyan)">+${extraSeconds}秒</strong><br>
+    🎵 カテゴリ: <strong style="color:var(--neon-cyan)">${categories}</strong>
   `;
 }
 
