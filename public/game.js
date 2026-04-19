@@ -98,25 +98,28 @@ function connectWS() {
     handleServerMessage(msg);
   };
 
-  ws.onclose = () => {
-    toast('サーバーから切断されました。再接続中...', 'error');
-    setTimeout(connectWS, 3000);
+  ws.onerror = (e) => {
+    console.error('WS error:', e);
+    toast('通信エラーが発生しました', 'error');
   };
 
-  ws.onerror = () => {
-    // will fire onclose
+  ws.onclose = () => {
+    console.log('WS closed');
+    // Reconnect after 3 seconds
+    setTimeout(connectWS, 3000);
   };
 }
 
-function send(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
+function send(msg) {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify(msg));
   }
 }
 
-// --- Message Handler ---
+// --- Message handling ---
 function handleServerMessage(msg) {
-  console.log('[WS]', msg.type, msg);
+  console.log('Received:', msg.type);
+
   switch (msg.type) {
     case 'connected':
       myId = msg.id;
@@ -132,7 +135,9 @@ function handleServerMessage(msg) {
     case 'room_created':
       myRoomKey = msg.roomKey;
       isHost = true;
-      setupRoomScreen(msg.players, msg.settings, msg.roomKey, true);
+      // 修正: settings がない場合は デフォルト値を使用
+      const createdSettings = msg.settings || { questionCount: 10, extraSeconds: 0, categories: ['ALL'] };
+      setupRoomScreen(msg.players, createdSettings, msg.roomKey, true);
       loadCategories(msg.categories);
       showScreen('screenRoom');
       break;
@@ -140,7 +145,9 @@ function handleServerMessage(msg) {
     case 'room_joined':
       myRoomKey = msg.roomKey;
       isHost = false;
-      setupRoomScreen(msg.players, msg.settings, msg.roomKey, false);
+      // 修正: settings がない場合は デフォルト値を使用
+      const joinedSettings = msg.settings || { questionCount: 10, extraSeconds: 0, categories: ['ALL'] };
+      setupRoomScreen(msg.players, joinedSettings, msg.roomKey, false);
       showScreen('screenRoom');
       break;
 
@@ -191,7 +198,9 @@ function handleServerMessage(msg) {
 
     case 'room_reset':
       myLastAnswers = [];
-      setupRoomScreen(msg.players, msg.settings, myRoomKey, isHost);
+      // 修正: settings がない場合は デフォルト値を使用
+      const resetSettings = msg.settings || { questionCount: 10, extraSeconds: 0, categories: ['ALL'] };
+      setupRoomScreen(msg.players, resetSettings, myRoomKey, isHost);
       showScreen('screenRoom');
       break;
 
@@ -199,180 +208,149 @@ function handleServerMessage(msg) {
       toast('部屋が解散されました', 'error');
       myRoomKey = null;
       isHost = false;
-      stopAudio();
       showScreen('screenLobby');
-      break;
-
-    case 'categories':
-      loadCategories(msg.categories);
       break;
 
     case 'error':
       toast(msg.message, 'error');
       break;
+
+    case 'categories':
+      loadCategories(msg.categories);
+      break;
   }
 }
 
-// --- Init ---
+// --- Initialization ---
 function init() {
-  const saved = getCookie(COOKIE_NICKNAME_KEY);
-  if (saved) {
-    document.getElementById('nicknameInput').value = saved;
-    send({ type: 'set_nickname', nickname: saved });
-    myNickname = saved;
-    document.getElementById('displayNickname').textContent = saved;
-    showScreen('screenLobby');
+  const nickname = getCookie(COOKIE_NICKNAME_KEY);
+  if (nickname) {
+    setNickname(nickname);
   } else {
     showScreen('screenNickname');
   }
-  // request categories for create room
-  send({ type: 'get_categories' });
 }
 
-// --- Nickname ---
-function saveNickname() {
-  const val = document.getElementById('nicknameInput').value.trim();
-  if (!val || val.length < 2) { toast('2文字以上入力してください', 'error'); return; }
-  ensureUserInteracted();
-  setCookie(COOKIE_NICKNAME_KEY, val, COOKIE_EXPIRE_DAYS);
-  send({ type: 'set_nickname', nickname: val });
+// --- Nickname screen ---
+function setNickname(name) {
+  name = (name || '').trim();
+  if (!name) {
+    toast('ニックネームを入力してください', 'error');
+    return;
+  }
+  if (name.length > 20) {
+    toast('ニックネームは20字以内です', 'error');
+    return;
+  }
+  myNickname = name;
+  setCookie(COOKIE_NICKNAME_KEY, name, COOKIE_EXPIRE_DAYS);
+  send({ type: 'set_nickname', nickname: name });
 }
-
-function changeNickname() {
-  document.getElementById('nicknameInput').value = myNickname || '';
-  showScreen('screenNickname');
-}
-
-// Enter key support for nickname
-document.getElementById('nicknameInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') saveNickname();
-});
 
 // --- Lobby ---
-function showCreateRoom() {
-  const p = document.getElementById('createRoomPanel');
-  const j = document.getElementById('joinRoomPanel');
-  p.style.display = p.style.display === 'none' ? 'block' : 'none';
-  j.style.display = 'none';
-  send({ type: 'get_categories' });
-}
-
-function showJoinRoom() {
-  const j = document.getElementById('joinRoomPanel');
-  const p = document.getElementById('createRoomPanel');
-  j.style.display = j.style.display === 'none' ? 'block' : 'none';
-  p.style.display = 'none';
-}
-
-function loadCategories(categories) {
-  const container = document.getElementById('categoryChips');
-  if (!container) return;
-  // Keep ALL chip
-  container.innerHTML = '<div class="chip active" data-cat="ALL" onclick="toggleCategory(this)">🎲 ランダム（全て）</div>';
-  categories.forEach(cat => {
-    const chip = document.createElement('div');
-    chip.className = 'chip';
-    chip.dataset.cat = cat;
-    chip.onclick = function() { toggleCategory(this); };
-    chip.textContent = cat;
-    container.appendChild(chip);
-  });
-  selectedCategories = new Set(['ALL']);
-}
-
-function toggleCategory(chip) {
-  const cat = chip.dataset.cat;
-  if (cat === 'ALL') {
-    selectedCategories = new Set(['ALL']);
-    document.querySelectorAll('#categoryChips .chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-  } else {
-    selectedCategories.delete('ALL');
-    document.querySelector('[data-cat="ALL"]')?.classList.remove('active');
-    if (chip.classList.contains('active')) {
-      chip.classList.remove('active');
-      selectedCategories.delete(cat);
-    } else {
-      chip.classList.add('active');
-      selectedCategories.add(cat);
-    }
-    if (selectedCategories.size === 0) {
-      selectedCategories.add('ALL');
-      document.querySelector('[data-cat="ALL"]')?.classList.add('active');
-    }
-  }
+function reloadLobby() {
+  send({ type: 'get_rooms' });
 }
 
 function createRoom() {
-  ensureUserInteracted();
-  const questionCount = parseInt(document.getElementById('settingQuestions').value) || 10;
-  const extraSeconds = parseInt(document.getElementById('settingExtraSeconds').value) || 0;
-  const categories = [...selectedCategories];
   send({
     type: 'create_room',
-    settings: { questionCount, extraSeconds, categories }
+    nickname: myNickname,
+    settings: {
+      questionCount: parseInt(document.getElementById('questionCountSelect').value) || 10,
+      extraSeconds: parseInt(document.getElementById('extraSecondsSelect').value) || 0,
+      categories: Array.from(selectedCategories),
+    }
   });
 }
 
 function joinRoom() {
-  ensureUserInteracted();
-  const key = document.getElementById('joinKeyInput').value.toUpperCase().trim();
-  if (key.length !== 6) { toast('6文字のコードを入力してください', 'error'); return; }
-  send({ type: 'join_room', roomKey: key });
+  const key = document.getElementById('joinRoomKeyInput').value.trim().toUpperCase();
+  if (!key) {
+    toast('コードを入力してください', 'error');
+    return;
+  }
+  send({
+    type: 'join_room',
+    roomKey: key,
+    nickname: myNickname,
+  });
 }
 
-document.getElementById('joinKeyInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') joinRoom();
-});
+// --- Room screen setup ---
+function setupRoomScreen(players, settings, roomKey, isHostFlag) {
+  // 修正: settings が undefined でないか確認
+  if (!settings) {
+    settings = { questionCount: 10, extraSeconds: 0, categories: ['ALL'] };
+  }
 
-// Auto-uppercase join input
-document.getElementById('joinKeyInput').addEventListener('input', e => {
-  e.target.value = e.target.value.toUpperCase();
-});
-
-// --- Room Screen ---
-function setupRoomScreen(players, settings, roomKey, host) {
   document.getElementById('roomKeyDisplay').textContent = roomKey;
   updatePlayerList('waitingPlayerList', players);
   updatePlayerCount(players);
   updateSettingsSummary(settings);
-  document.getElementById('hostControls').style.display = host ? 'block' : 'none';
-  document.getElementById('guestWaiting').style.display = host ? 'none' : 'block';
   updateStartButton(players);
+
+  const startBtn = document.getElementById('startGameBtn');
+  const dissolveBtn = document.getElementById('dissolveRoomBtn');
+  const categoryCheckboxes = document.querySelectorAll('#categoryList input[type="checkbox"]');
+
+  if (isHostFlag) {
+    startBtn.style.display = 'block';
+    dissolveBtn.style.display = 'block';
+    categoryCheckboxes.forEach(cb => cb.disabled = false);
+  } else {
+    startBtn.style.display = 'none';
+    dissolveBtn.style.display = 'none';
+    categoryCheckboxes.forEach(cb => cb.disabled = true);
+  }
 }
 
-function updatePlayerList(listId, players) {
-  const list = document.getElementById(listId);
-  if (!list) return;
-  list.innerHTML = players.map(p => `
-    <li class="player-item ${p.isMiss ? 'is-miss' : ''}">
-      <div class="player-avatar">${(p.nickname || '?')[0].toUpperCase()}</div>
-      <span class="player-name">${escHtml(p.nickname)}</span>
-      ${p.isHost ? '<span class="player-host-badge">HOST</span>' : ''}
-      ${p.isMiss ? '<span class="player-miss-icon">一回休み</span>' : ''}
-      ${listId !== 'waitingPlayerList' ? `<span class="player-score">${p.score}</span>` : ''}
-    </li>
-  `).join('');
+function updatePlayerList(elementId, players) {
+  const container = document.getElementById(elementId);
+  if (!container) return;
+  
+  // 修正: players が配列であることを確認
+  if (!Array.isArray(players)) {
+    players = [];
+  }
+
+  container.innerHTML = players.map(p => {
+    const hostBadge = p.isHost ? ' 👑' : '';
+    return `<div class="player-item">${p.nickname}${hostBadge}</div>`;
+  }).join('');
 }
 
 function updatePlayerCount(players) {
-  document.getElementById('playerCountDisplay').textContent = `${players.length}/10`;
+  // 修正: players が配列であることを確認
+  if (!Array.isArray(players)) {
+    players = [];
+  }
+
+  const el = document.getElementById('playerCount');
+  if (el) el.textContent = `${players.length}人`;
   updateStartButton(players);
 }
 
 function updateStartButton(players) {
   const btn = document.getElementById('startGameBtn');
-  if (btn) btn.disabled = players.length < 2;
+  if (btn) btn.disabled = (Array.isArray(players) ? players.length : 0) < 2;
 }
 
 function updateSettingsSummary(settings) {
   const el = document.getElementById('settingsSummary');
   if (!el) return;
-  if (!settings) return;
+  
+  // 修正: settings と settings.categories が存在することを確認
+  if (!settings) {
+    settings = { questionCount: 10, extraSeconds: 0, categories: ['ALL'] };
+  }
+
+  const categories = Array.isArray(settings.categories) ? settings.categories : ['ALL'];
+
   el.innerHTML = `
     📋 問題数: <strong style="color:var(--neon-cyan)">${settings.questionCount}問</strong><br>
     ⏱ 追加秒数: <strong style="color:var(--neon-cyan)">+${settings.extraSeconds}秒</strong><br>
-    🎵 カテゴリ: <strong style="color:var(--neon-cyan)">${settings.categories.join('、')}</strong>
+    🎵 カテゴリ: <strong style="color:var(--neon-cyan)">${categories.join('、')}</strong>
   `;
 }
 
@@ -394,398 +372,232 @@ function dissolveRoom() {
 
 function leaveRoom() {
   send({ type: 'leave_room' });
-  myRoomKey = null;
-  isHost = false;
-  showScreen('screenLobby');
 }
 
-// --- Countdown ---
-function startCountdown(secs) {
-  showScreen('screenCountdown');
-  let n = secs;
-  const el = document.getElementById('countdownNum');
-  el.textContent = n;
-  const iv = setInterval(() => {
-    n--;
-    if (n <= 0) {
-      clearInterval(iv);
-      el.textContent = 'START!';
+// --- Categories ---
+function loadCategories(categories) {
+  if (!Array.isArray(categories)) categories = [];
+  
+  const container = document.getElementById('categoryList');
+  if (!container) return;
+  
+  container.innerHTML = ['ALL', ...categories].map(cat => `
+    <label>
+      <input type="checkbox" value="${cat}" ${cat === 'ALL' ? 'checked' : ''} onchange="toggleCategory('${cat}')">
+      ${cat}
+    </label>
+  `).join('');
+}
+
+function toggleCategory(cat) {
+  if (cat === 'ALL') {
+    selectedCategories.clear();
+    selectedCategories.add('ALL');
+  } else {
+    selectedCategories.delete('ALL');
+    const cb = document.querySelector(`#categoryList input[value="${cat}"]`);
+    if (cb && cb.checked) {
+      selectedCategories.add(cat);
     } else {
-      el.textContent = n;
+      selectedCategories.delete(cat);
+    }
+  }
+  updateSettings();
+}
+
+function updateSettings() {
+  send({
+    type: 'update_settings',
+    settings: {
+      questionCount: parseInt(document.getElementById('questionCountSelect').value) || 10,
+      extraSeconds: parseInt(document.getElementById('extraSecondsSelect').value) || 0,
+      categories: Array.from(selectedCategories),
+    }
+  });
+}
+
+// --- Game screen ---
+function startCountdown(seconds) {
+  showScreen('screenCountdown');
+  const el = document.getElementById('countdownDisplay');
+  let remaining = seconds;
+  const interval = setInterval(() => {
+    el.textContent = remaining;
+    remaining--;
+    if (remaining < 0) {
+      clearInterval(interval);
+      showScreen('screenGame');
     }
   }, 1000);
 }
 
-// --- Question ---
-function startQuestion(msg) {
-  showScreen('screenGame');
-  amAnswering = false;
-  buzzerEnabled = false;
-
-  document.getElementById('qNumber').textContent = msg.questionIndex;
-  document.getElementById('qTotal').textContent = `/ ${msg.totalQuestions}`;
-  document.getElementById('qCategory').textContent = msg.category || '-';
-  document.getElementById('progressFill').style.width = `${(msg.questionIndex / msg.totalQuestions) * 100}%`;
-
-  // Reset UI fully for new question
-  document.getElementById('buzzerPressedInfo').style.display = 'none';
-  document.getElementById('answerArea').style.display = 'none';
-  document.getElementById('buzzerArea').style.display = 'block';
-  document.getElementById('answerInput').value = '';
-  const buzzerBtn = document.getElementById('buzzerBtn');
-  buzzerBtn.disabled = true;
-  buzzerBtn.textContent = '読み込み中...';
-
-  updatePlayerList('gamePlayerList', msg.players);
-
-  audioDuration = msg.playDuration;
-  audioStartTime = Date.now();
-  document.getElementById('audioTimer').textContent = formatTime(msg.playDuration);
-
-  loadAndPlayAudio(msg);
-}
-
-// 音声を完全にリセットしてから読み込む（競合を防ぐ）
-function loadAndPlayAudio(msg) {
-  // 古いaudio要素を完全に破棄して新しく作る（oncanplaythroughの蓄積を防ぐ）
-  const oldAudio = document.getElementById('gameAudio');
-  const newAudio = document.createElement('audio');
-  newAudio.id = 'gameAudio';
-  newAudio.preload = 'auto';
-  oldAudio.parentNode.replaceChild(newAudio, oldAudio);
-
-  const buzzerBtn = document.getElementById('buzzerBtn');
-  const audioLabel = document.getElementById('audioLabel');
-  const audioIcon = document.getElementById('audioIcon');
-
-  audioLabel.textContent = '読み込み中...';
-  audioIcon.textContent = '⏳';
-
-  // 再生を実際に開始する関数（自動再生ポリシー対応）
-  function doPlay() {
-    newAudio.currentTime = msg.startTime || 0;
-    const playPromise = newAudio.play();
-    if (playPromise !== undefined) {
-      playPromise.then(() => {
-        // 再生成功
-        audioLabel.textContent = 'イントロ再生中...';
-        audioIcon.textContent = '🎵';
-        buzzerBtn.disabled = false;
-        buzzerBtn.textContent = 'わかった！';
-        buzzerEnabled = true;
-        audioStartTime = Date.now();
-        startAudioTimer(msg.playDuration);
-      }).catch((err) => {
-        // 自動再生ポリシーでブロックされた場合 → ユーザーにタップを促す
-        console.warn('自動再生ブロック:', err.name);
-        if (err.name === 'NotAllowedError') {
-          showAutoplayPrompt(newAudio, msg, buzzerBtn);
-        } else {
-          // ファイルが見つからない等のエラー
-          onAudioError(msg, buzzerBtn, audioLabel);
-        }
-      });
-    }
+function loadAndPlayAudio(songFile, startTime, duration) {
+  ensureUserInteracted();
+  
+  // 修正: 前の audio 要素を完全に削除
+  const oldAudio = document.getElementById('audioPlayer');
+  if (oldAudio) {
+    oldAudio.pause();
+    oldAudio.remove();
   }
 
-  // canplaythroughでなくcanplayを使う（より早く発火する）
-  newAudio.addEventListener('canplay', doPlay, { once: true });
+  // 新しい audio 要素を毎回作成
+  const audio = document.createElement('audio');
+  audio.id = 'audioPlayer';
+  audio.src = `/music/${songFile}`;
+  audio.volume = 0.7;
 
-  newAudio.addEventListener('error', () => {
-    onAudioError(msg, buzzerBtn, audioLabel);
+  // イベントリスナーは once: true で1回だけ実行
+  audio.addEventListener('canplay', () => {
+    console.log('Audio canplay, seeking to', startTime);
+    audio.currentTime = startTime;
+    audio.play().catch(err => {
+      if (err.name === 'NotAllowedError') {
+        showAutoplayPrompt();
+      } else {
+        onAudioError();
+      }
+    });
   }, { once: true });
 
-  // タイムアウト保険：10秒経っても読み込めなければエラー扱い
-  const loadTimeout = setTimeout(() => {
-    if (buzzerBtn.disabled) {
-      console.warn('音声読み込みタイムアウト');
-      onAudioError(msg, buzzerBtn, audioLabel);
+  // ロードエラーハンドラ
+  audio.addEventListener('error', () => {
+    onAudioError();
+  }, { once: true });
+
+  document.body.appendChild(audio);
+  audio.load();
+
+  // タイムアウト: 10秒以内にロードされない場合
+  setTimeout(() => {
+    if (audio && audio.paused && audio.readyState < 2) {
+      console.warn('Audio load timeout, continuing anyway');
+      onAudioError();
     }
   }, 10000);
 
-  newAudio.addEventListener('canplay', () => clearTimeout(loadTimeout), { once: true });
-  newAudio.addEventListener('error', () => clearTimeout(loadTimeout), { once: true });
-
-  newAudio.src = `/music/${msg.songFile}`;
-  newAudio.load();
+  audioStartTime = startTime;
+  audioDuration = duration;
 }
 
-// 自動再生がブロックされた時のUI
-function showAutoplayPrompt(audio, msg, buzzerBtn) {
-  const audioLabel = document.getElementById('audioLabel');
-  const audioIcon = document.getElementById('audioIcon');
-  audioLabel.innerHTML = '<span style="color:var(--neon-yellow)">▶ タップして音楽を再生</span>';
-  audioIcon.textContent = '🔇';
-  buzzerBtn.disabled = false;
-  buzzerBtn.textContent = '▶ タップして開始';
-  buzzerEnabled = false; // まだバザーは使えない
-
-  // バザーボタンタップで再生開始
-  buzzerBtn.onclick = function () {
-    audio.currentTime = msg.startTime || 0;
-    audio.play().then(() => {
-      audioLabel.textContent = 'イントロ再生中...';
-      audioIcon.textContent = '🎵';
-      buzzerBtn.textContent = 'わかった！';
-      buzzerEnabled = true;
-      audioStartTime = Date.now();
-      startAudioTimer(msg.playDuration);
-      // 元のonclickに戻す
-      buzzerBtn.onclick = null;
-    }).catch(() => {
-      onAudioError(msg, buzzerBtn, audioLabel);
-      buzzerBtn.onclick = null;
-    });
-  };
+function showAutoplayPrompt() {
+  toast('🔊 ボタンをタップして音声を再生してください', 'info', 5000);
 }
 
-function onAudioError(msg, buzzerBtn, audioLabel) {
-  audioLabel.textContent = '⚠️ 音声ファイルなし（バザー回答のみ可）';
-  document.getElementById('audioIcon').textContent = '🚫';
-  buzzerBtn.disabled = false;
-  buzzerBtn.textContent = 'わかった！';
-  buzzerEnabled = true;
-  // タイマーは動かしておく（サーバー側でタイムアウト管理）
-  startAudioTimer(msg.playDuration);
+function onAudioError() {
+  toast('⚠️ 音声の読み込みに失敗しました。ゲームを続行できます', 'error', 3000);
 }
-
-function startAudioTimer(duration) {
-  clearInterval(audioPlayTimer);
-  const timerEl = document.getElementById('audioTimer');
-  let elapsed = 0;
-  audioPlayTimer = setInterval(() => {
-    elapsed++;
-    const remaining = Math.max(0, duration - elapsed);
-    timerEl.textContent = formatTime(remaining);
-    if (remaining === 0) {
-      clearInterval(audioPlayTimer);
-      document.getElementById('audioLabel').textContent = '再生終了';
-    }
-  }, 1000);
-}
-
-function formatTime(secs) {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function stopAudio() {
-  clearInterval(audioPlayTimer);
-  const audio = document.getElementById('gameAudio');
-  audio.pause();
-  audio.src = '';
-}
-
-// --- Buzzer ---
-function pressBuzzer() {
-  if (!buzzerEnabled || amAnswering) return;
-  send({ type: 'buzzer' });
-}
-
-// Spacebar support
-document.addEventListener('keydown', e => {
-  if (e.code === 'Space' && gameState === 'game' && !e.target.closest('input')) {
-    e.preventDefault();
-    pressBuzzer();
-  }
-  if (e.key === 'Enter' && gameState === 'game' && e.target === document.getElementById('answerInput')) {
-    submitAnswer();
-  }
-});
 
 function onBuzzerPressed(msg) {
-  const isMe = msg.playerId === myId;
-  
-  // Pause audio
-  document.getElementById('gameAudio').pause();
-  clearInterval(audioPlayTimer);
-  document.getElementById('audioLabel').textContent = `${msg.nickname} が回答中...`;
-
-  document.getElementById('buzzerPressedInfo').style.display = 'block';
-  document.getElementById('buzzerPlayerName').textContent = msg.nickname;
-  document.getElementById('buzzerBtn').disabled = true;
-
-  if (isMe) {
+  if (msg.playerId === myId) {
     amAnswering = true;
-    document.getElementById('answerArea').style.display = 'block';
-    document.getElementById('buzzerArea').style.display = 'none';
-    const input = document.getElementById('answerInput');
-    input.value = '';
-    input.focus();
+    buzzerEnabled = false;
+    showScreen('screenAnswerInput');
+  } else {
+    toast(`⏱ ${msg.nickname} が回答中...`, 'info');
   }
-}
-
-function submitAnswer() {
-  const val = document.getElementById('answerInput').value.trim();
-  if (!val) { toast('回答を入力してください', 'error'); return; }
-  send({ type: 'answer', answer: val });
-  amAnswering = false;
-  document.getElementById('answerArea').style.display = 'none';
-  document.getElementById('buzzerArea').style.display = 'block';
 }
 
 function onAnswerResult(msg) {
-  clearInterval(audioPlayTimer);
-
-  // Track my own answers
-  if (msg.playerId === myId) {
-    myLastAnswers.push({
-      title: msg.songTitle,
-      answer: msg.answer,
-      correct: msg.correct,
-    });
-  }
-
+  const isMe = msg.playerId === myId;
+  
+  // 修正: answer が空文字や "-" でないか確認
+  const answerText = (msg.answer && msg.answer.trim() !== '' && msg.answer !== '-') ? msg.answer : '？';
+  
   if (msg.correct) {
     flashOverlay('correct');
-    stopAudio();
-    showAnswerReveal(msg, true);
+    toast(`✓ 正解: ${answerText}`, 'success');
+    if (isMe) myLastAnswers.push({ correct: true, answer: msg.answer });
   } else {
-    flashOverlay('wrong');
-
-    // Show wrong result briefly, then resume game screen
-    toast(`❌ ${msg.nickname}「${msg.answer}」→ 不正解！一回休み`, 'error', 2500);
-    amAnswering = false;
-    
-    // Update player list
-    updatePlayerList('gamePlayerList', msg.players);
-
-    // Reset buzzer UI
-    const buzzerBtn = document.getElementById('buzzerBtn');
-    document.getElementById('buzzerPressedInfo').style.display = 'none';
-    document.getElementById('answerArea').style.display = 'none';
-    document.getElementById('buzzerArea').style.display = 'block';
-
-    // Check if I'm on miss
-    const me = msg.players.find(p => p.id === myId);
-    if (me && me.isMiss) {
-      buzzerBtn.disabled = true;
-      buzzerBtn.textContent = '😵 一回休み';
-      buzzerEnabled = false;
-    } else {
-      buzzerBtn.disabled = false;
-      buzzerBtn.textContent = 'わかった！';
-      buzzerEnabled = true;
-    }
-
-    // Resume audio
-    const audio = document.getElementById('gameAudio');
-    if (audio.src && audio.paused) {
-      audio.play().catch(() => {});
-      const elapsed = Math.floor((Date.now() - audioStartTime) / 1000);
-      const remaining = Math.max(1, audioDuration - elapsed);
-      startAudioTimer(remaining);
-      document.getElementById('audioLabel').textContent = 'イントロ再生中...';
-    }
+    flashOverlay('incorrect');
+    const userAnswer = isMe ? document.getElementById('answerInput').value : msg.answer;
+    toast(`✗ 不正解: ${answerText}`, 'error');
+    if (isMe) myLastAnswers.push({ correct: false, answer: userAnswer });
   }
+
+  amAnswering = false;
+  updatePlayerList('playerList', msg.players);
+
+  // 修正: 少し遅延させて answer reveal 画面を表示
+  setTimeout(() => {
+    showScreen('screenAnswerReveal');
+  }, 500);
 }
 
 function onQuestionTimeout(msg) {
-  clearInterval(audioPlayTimer);
-  const audio = document.getElementById('gameAudio');
-  audio.pause();
-
-  showAnswerReveal({ songTitle: msg.answer, artist: msg.artist, correct: false, players: msg.players }, false);
-}
-
-function showAnswerReveal(msg, wasCorrect) {
+  flashOverlay('timeout');
+  // 修正: answer が空文字や "-" でないか確認
+  const answerText = (msg.answer && msg.answer.trim() !== '' && msg.answer !== '-') ? msg.answer : '？';
+  toast(`時間切れ: ${answerText}`, 'error');
+  updatePlayerList('playerList', msg.players);
   showScreen('screenAnswerReveal');
-
-  document.getElementById('revealSongTitle').textContent = msg.songTitle || '-';
-  document.getElementById('revealArtist').textContent = msg.artist || '-';
-
-  const resultEl = document.getElementById('revealResult');
-  if (wasCorrect && msg.nickname) {
-    resultEl.innerHTML = `<span style="color:var(--neon-green); font-size:1.2rem; font-weight:900;">✅ ${escHtml(msg.nickname)} の正解！</span>`;
-  } else if (!wasCorrect && !msg.nickname) {
-    resultEl.innerHTML = `<span style="color:var(--text-dim);">⏱ 時間切れ</span>`;
-  } else {
-    resultEl.innerHTML = '';
-  }
-
-  updatePlayerList('revealPlayerList', msg.players || []);
-
-  // Play sabi if correct
-  if (wasCorrect && msg.songFile) {
-    document.getElementById('revealSabiCard').style.display = 'block';
-
-    // audio要素を再生成して競合を防ぐ
-    const oldAudio = document.getElementById('gameAudio');
-    const sabiAudio = document.createElement('audio');
-    sabiAudio.id = 'gameAudio';
-    sabiAudio.preload = 'auto';
-    oldAudio.parentNode.replaceChild(sabiAudio, oldAudio);
-
-    const sabiEl = document.getElementById('sabiTimer');
-    let remaining = msg.sabiDuration || 15;
-    sabiEl.textContent = formatTime(remaining);
-
-    sabiAudio.addEventListener('canplay', () => {
-      sabiAudio.currentTime = msg.sabiTime || 0;
-      sabiAudio.play().catch(err => {
-        console.warn('サビ再生エラー:', err.name);
-      });
-      const iv = setInterval(() => {
-        remaining--;
-        sabiEl.textContent = formatTime(Math.max(0, remaining));
-        if (remaining <= 0) clearInterval(iv);
-      }, 1000);
-    }, { once: true });
-
-    sabiAudio.src = `/music/${msg.songFile}`;
-    sabiAudio.load();
-  } else {
-    document.getElementById('revealSabiCard').style.display = 'none';
-  }
 }
 
-// --- Game End ---
 function onGameEnd(msg) {
-  stopAudio();
-  showScreen('screenResults');
+  const results = msg.results || [];
+  const container = document.getElementById('resultsList');
+  if (!container) return;
 
-  // Rankings
-  const rankEl = document.getElementById('finalRankings');
-  rankEl.innerHTML = msg.results.map((p, i) => `
-    <div class="result-rank rank-${i + 1}">
-      <div class="rank-number">${i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}</div>
-      <div class="player-avatar">${p.nickname[0].toUpperCase()}</div>
-      <div style="flex:1">
-        <div style="font-weight:900;">${escHtml(p.nickname)}</div>
-        ${p.id === myId ? '<div style="font-size:0.75rem; color:var(--neon-cyan);">YOU</div>' : ''}
-      </div>
-      <div class="player-score" style="font-size:1.5rem;">${p.score}</div>
-    </div>
-  `).join('');
-
-  // My answers
-  const myData = msg.results.find(r => r.id === myId);
-  const myAnswersEl = document.getElementById('myAnswers');
-  if (myData && myData.answers && myData.answers.length > 0) {
-    myAnswersEl.innerHTML = myData.answers.map(a => `
-      <li>
-        <span class="${a.correct ? 'answer-correct' : 'answer-wrong'}">${a.correct ? '✅' : '❌'}</span>
-        <span style="flex:1">${escHtml(a.title)}</span>
-        ${!a.correct ? `<span style="color:var(--text-dim); font-size:0.8rem;">「${escHtml(a.answer)}」</span>` : ''}
-      </li>
-    `).join('');
-  } else {
-    myAnswersEl.innerHTML = '<li style="color:var(--text-dim);">回答データなし</li>';
+  // 修正: results が配列であることを確認
+  if (!Array.isArray(results)) {
+    container.innerHTML = '<p>結果を取得できませんでした</p>';
+    showScreen('screenResults');
+    return;
   }
 
-  document.getElementById('resultHostControls').style.display = isHost ? 'block' : 'none';
-  document.getElementById('resultGuestControls').style.display = isHost ? 'none' : 'block';
+  container.innerHTML = results.map((r, i) => {
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '　';
+    const hostBadge = r.isHost ? ' 👑' : '';
+    return `
+      <div class="result-row">
+        <div class="medal">${medal}</div>
+        <div class="name">${r.nickname}${hostBadge}</div>
+        <div class="score">${r.score}点</div>
+      </div>
+    `;
+  }).join('');
+
+  // 修正: 最後の問題のスクリーンを表示
+  showScreen('screenResults');
+}
+
+// --- Game actions ---
+function submitAnswer() {
+  ensureUserInteracted();
+  const input = document.getElementById('answerInput');
+  const answer = (input.value || '').trim();
+  if (!answer) {
+    toast('回答を入力してください', 'error');
+    return;
+  }
+  input.value = '';
+  send({ type: 'answer', answer });
 }
 
 function playAgain() {
   send({ type: 'play_again' });
 }
 
-// --- Utils ---
-function escHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function backToLobby() {
+  myRoomKey = null;
+  isHost = false;
+  showScreen('screenLobby');
 }
 
-// --- Start ---
-connectWS();
+// --- Initialization on page load ---
+window.addEventListener('DOMContentLoaded', () => {
+  connectWS();
+  
+  // Enter key handling for inputs
+  document.getElementById('nicknameInput')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') setNickname(e.target.value);
+  });
+  
+  document.getElementById('joinRoomKeyInput')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') joinRoom();
+  });
+  
+  document.getElementById('answerInput')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') submitAnswer();
+  });
+});
